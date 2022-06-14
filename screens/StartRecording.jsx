@@ -1,12 +1,94 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import { StyleSheet, Text, View, TouchableOpacity } from 'react-native'
+import {Stopwatch} from 'react-native-stopwatch-timer';
+import { Audio } from 'expo-av';
+import { storage } from '../Firebase';
+import 'firebase/storage'
 
 const StartRecording = (props) => {
+
+    console.log(recording);
+
+    const [isTimerStart, setIsTimerStart] = useState(false);
+    const [isStopwatchStart, setIsStopwatchStart] = useState(false);
+    const [resetStopwatch, setResetStopwatch] = useState(false);
+    const [duration, setDuration] = useState(0);
+
+    const [recording, setRecording] = useState();
+
+    const audioRecordingStart = async () => {
+        try {
+            console.log('Requesting permissions..');
+            await Audio.requestPermissionsAsync();
+            await Audio.setAudioModeAsync({
+              allowsRecordingIOS: true,
+              playsInSilentModeIOS: true,
+            });
+            console.log('Starting recording..');
+            const { recording } = await Audio.Recording.createAsync(
+               Audio.RECORDING_OPTIONS_PRESET_HIGH_QUALITY,
+            );
+            setRecording(recording);
+            console.log('Recording started');
+          } catch (err) {
+            console.error('Failed to start recording', err);
+          }
+    }
+
+    const audioRecordingStop = async () => {
+        console.log('Stopping recording..');
+        setRecording(undefined);
+        await recording.stopAndUnloadAsync();
+        const uri = recording.getURI();
+        console.log('Recording stopped and stored at', uri);
+        uploadAudio(uri);
+    }
+
+    const startRecording = () => {
+        audioRecordingStart();
+        setIsStopwatchStart(true);
+    }
+
+    const stopRecording = () => {
+        audioRecordingStop();
+        setIsStopwatchStart(false);
+        setResetStopwatch(true);
+        console.log("final time : ", duration);
+        // props.navigation.navigate("Home")
+    }
+    const uploadAudio  = async (uri) => {
+        const ref = storage.ref().child(`audio/${new Date().toISOString()}`);
+        await ref.put(uri);
+        const audioURL = await ref.getDownloadURL();
+        console.log(audioURL);
+    }
+
+
+
+    useEffect(() => {
+        startRecording();
+    },[])
+
+
     return (
         <View style={styles.wrapper}>
             <View style={styles.menu}>
                 <View style={styles.time}>
-                    <Text style={styles.timeText}>00:00:00</Text>
+                    {/* <Text style={styles.timeText}>00:00:00</Text> */}
+                    <Stopwatch
+                        laps
+                        msecs
+                        start={isStopwatchStart}
+                        // To start
+                        reset={resetStopwatch}
+                        // To reset
+                        options={options}
+                        // Options for the styling
+                        getTime={(time) => {
+                        // console.log(time);
+                        setDuration(time);
+                        }}
+                    />
                 </View>
 
                 <View style={styles.buttons}>
@@ -37,7 +119,7 @@ const StartRecording = (props) => {
                 </View>
 
                 <View style={styles.LastButton}>
-                    <TouchableOpacity onPress={() => props.navigation.navigate("Home")} style={styles.startButton}>
+                    <TouchableOpacity onPress={stopRecording} style={styles.startButton}>
                             <Text style={styles.startButtonText}>Stop</Text>
                     </TouchableOpacity>
                 </View>
@@ -123,3 +205,17 @@ const styles = StyleSheet.create({
     },
 
 })
+const options = {
+    container: {
+      backgroundColor: '#FF0000',
+      padding: 5,
+      borderRadius: 5,
+      width: 200,
+      alignItems: 'center',
+    },
+    text: {
+      fontSize: 25,
+      color: '#FFF',
+      marginLeft: 7,
+    },
+  };
