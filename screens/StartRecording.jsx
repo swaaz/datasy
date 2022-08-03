@@ -3,11 +3,19 @@ import { StyleSheet, Text, View, TouchableOpacity } from 'react-native'
 import {Stopwatch} from 'react-native-stopwatch-timer';
 import { Audio } from 'expo-av';
 import { storage } from '../Firebase';
-import 'firebase/storage'
+import 'firebase/storage';
+import * as Location from "expo-location";
+const axios = require('axios').default;
+import MapView, { Polyline } from 'react-native-maps';
+
+
+const BACKENDURL = "https://8011-117-196-9-22.ngrok.io/analyze";
+
 
 const StartRecording = (props) => {
 
-    console.log(recording);
+    // console.log(currentLocation);
+    const {lat, long } = props.route.params;
 
     const [isTimerStart, setIsTimerStart] = useState(false);
     const [isStopwatchStart, setIsStopwatchStart] = useState(false);
@@ -16,54 +24,146 @@ const StartRecording = (props) => {
 
     const [recording, setRecording] = useState();
 
+    const [currentLocation, setCurrentLocation] = useState({
+        latitude: lat ,
+        longitude: long,
+    }
+    );
+
+    const [coordinates, setCoordinates] = useState([]);
+    const [isTracking , setIsTracking] = useState(false);
+
     const audioRecordingStart = async () => {
         try {
-            console.log('Requesting permissions..');
+            // console.log('Requesting permissions..');
             await Audio.requestPermissionsAsync();
             await Audio.setAudioModeAsync({
               allowsRecordingIOS: true,
               playsInSilentModeIOS: true,
             });
-            console.log('Starting recording..');
+            // console.log('Starting recording..');
             const { recording } = await Audio.Recording.createAsync(
                Audio.RECORDING_OPTIONS_PRESET_HIGH_QUALITY,
             );
             setRecording(recording);
-            console.log('Recording started');
+            // console.log('Recording started');
           } catch (err) {
             console.error('Failed to start recording', err);
           }
     }
 
     const audioRecordingStop = async () => {
-        console.log('Stopping recording..');
+        // console.log('Stopping recording..');
         setRecording(undefined);
         await recording.stopAndUnloadAsync();
         const uri = recording.getURI();
-        console.log('Recording stopped and stored at', uri);
+        // console.log('Recording stopped and stored at', uri);
         uploadAudio(uri);
     }
 
-    const startRecording = () => {
+    const startRecording = async() => {
         audioRecordingStart();
+        _getLocationAsync();
+        _watchLocationAsync();
         setIsStopwatchStart(true);
+        setIsTracking(true);
     }
 
-    const stopRecording = () => {
+    const stopRecording = async() => {
+        // console.log('Stopping recording..');
         audioRecordingStop();
-        setIsStopwatchStart(false);
+        // console.log("final time : ", duration);
         setResetStopwatch(true);
-        console.log("final time : ", duration);
-        // props.navigation.navigate("Home")
+        setIsStopwatchStart(false);
+        setIsTracking(false);
+        props.navigation.navigate("Map")
+        // console.log("coordinates",coordinates);
     }
     const uploadAudio  = async (uri) => {
-        const ref = storage.ref().child(`audio/${new Date().toISOString()}`);
-        await ref.put(uri);
-        const audioURL = await ref.getDownloadURL();
-        console.log(audioURL);
+
+        
+        try {
+            const blob = await new Promise((resolve, reject) => {
+              const xhr = new XMLHttpRequest();
+              xhr.onload = () => {
+                try {
+                  resolve(xhr.response);
+                } catch (error) {
+                  console.log("error:", error);
+                }
+              };
+              xhr.onerror = (e) => {
+                console.log(e);
+                reject(new TypeError("Network request failed"));
+              };
+              xhr.responseType = "blob";
+              xhr.open("GET", uri, true);
+              xhr.send(null);
+            });
+            if (blob != null) {
+              const uriParts = uri.split(".");
+              const fileType = uriParts[uriParts.length - 1];
+           
+
+                const ref = storage.ref().child(`${new Date().toISOString()}.${fileType}`);
+                await ref.put(blob, {
+                    contentType: `audio/${fileType}`,
+                });
+                const audioURL = await ref.getDownloadURL();
+                console.log("Successfully uploaded to the Cloud storage \n URL : " +  audioURL);
+
+                axios.post(BACKENDURL , {
+                    url: audioURL,
+                    coordinates: coordinates,
+                  })
+                  .then((res) => console.log("Sent to backend"))
+                  .catch((err) => console.log(err));
+
+            } else {
+              console.log("error with blob");
+            }
+          } catch (error) {
+            console.log("error:", error);
+          }
+
     }
 
+    _getLocationAsync = async () => {
+        let { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') {
+            setErrorMsg('Permission to access location was denied');
+            return;
+        }
 
+        let location = await Location.getCurrentPositionAsync({  accuracy: Location.Accuracy.High });
+        // console.log(location)
+        setCurrentLocation({
+            latitude : location.coords.latitude,
+            longitude : location.coords.longitude
+        });
+    };
+    const _watchLocationAsync = async () => {
+        let { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') {
+          setErrorMsg('Permission to access location was denied');
+          return;
+        }
+
+        let locations = await Location.watchPositionAsync({ accuracy: Location.Accuracy.High, distanceInterval: 1  }, (loc) => {
+            // console.log("curr" , loc.coords);
+            setCurrentLocation({
+                latitude : loc.coords.latitude,
+                longitude : loc.coords.longitude,
+            })
+            setCoordinates( prev => [...prev, {
+                duration : duration,
+                latitude : loc.coords.latitude,
+                longitude : loc.coords.longitude
+            }] );
+
+        });
+
+    };
 
     useEffect(() => {
         startRecording();
@@ -72,6 +172,19 @@ const StartRecording = (props) => {
 
     return (
         <View style={styles.wrapper}>
+
+        <MapView
+                    style={styles.map}
+                    showsUserLocation
+                    followsUserLocation
+                    region={{
+                        latitude: currentLocation.latitude,
+                        latitudeDelta: 0.001,
+                        longitude: currentLocation.longitude,
+                        longitudeDelta: 0.001
+                    }}
+                    />
+
             <View style={styles.menu}>
                 <View style={styles.time}>
                     {/* <Text style={styles.timeText}>00:00:00</Text> */}
@@ -118,12 +231,18 @@ const StartRecording = (props) => {
                     </View>
                 </View>
 
-                <View style={styles.LastButton}>
+                {/* <View style={styles.LastButton}>
                     <TouchableOpacity onPress={stopRecording} style={styles.startButton}>
                             <Text style={styles.startButtonText}>Stop</Text>
                     </TouchableOpacity>
-                </View>
+                </View> */}
 
+            </View>
+
+            <View style={styles.LastButton}>
+                    <TouchableOpacity onPress={stopRecording} style={styles.startButton}>
+                            <Text style={styles.startButtonText}>Stop</Text>
+                    </TouchableOpacity>
             </View>
         </View>
     )
@@ -132,6 +251,9 @@ const StartRecording = (props) => {
 export default StartRecording
 
 const styles = StyleSheet.create({
+    map: {
+        ...StyleSheet.absoluteFillObject,
+      },
     wrapper : {
         flex: 1,
         backgroundColor: "#EEEEEE",
@@ -142,7 +264,7 @@ const styles = StyleSheet.create({
     },
     menu : {
         position: 'absolute',
-        bottom: 50,
+        bottom: 30,
         display: 'flex',
         alignItems : 'center',
         width: '80%'
@@ -184,7 +306,8 @@ const styles = StyleSheet.create({
         paddingVertical: 5
     },
     LastButton : {
-        marginVertical: 50
+        marginVertical: 50,
+        zIndex: 1000
     },
     startButton : {
         width: 150,
